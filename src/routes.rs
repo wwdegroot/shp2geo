@@ -3,21 +3,20 @@
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     body::Body,
     extract::{DefaultBodyLimit, Multipart, Query, State},
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use serde_json::json;
 
 use crate::{
+    config::Limits,
     convert::{OutputFormat, convert_all},
     error::ApiError,
-    limits::Limits,
-    shapefile,
-    upload,
+    shapefile, upload,
 };
 
 pub fn router(limits: Arc<Limits>) -> Router {
@@ -82,10 +81,7 @@ async fn convert(
 
 /// Read the `file` field from the multipart body into memory, enforcing the
 /// upload size cap while streaming chunks.
-async fn read_file_field(
-    mut multipart: Multipart,
-    limits: &Limits,
-) -> Result<Vec<u8>, ApiError> {
+async fn read_file_field(mut multipart: Multipart, limits: &Limits) -> Result<Vec<u8>, ApiError> {
     let mut zip_bytes: Option<Vec<u8>> = None;
     while let Some(mut field) = multipart
         .next_field()
