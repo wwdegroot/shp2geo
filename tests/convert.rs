@@ -4,16 +4,16 @@
 use std::{collections::HashMap, io::Cursor, path::Path, sync::Arc};
 
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
-    Router,
 };
 use flatgeobuf::FallibleStreamingIterator;
 use geozero::{FeatureProperties, GeozeroGeometry};
 use http_body_util::BodyExt;
 use tower::{Service, ServiceExt};
 
-use shapefile_converter::{error::ApiError, limits::Limits, routes::router};
+use shapefile_converter::{config::Limits, error::ApiError, routes::router};
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -51,12 +51,18 @@ fn write_points_shapefile(dir: &Path, name: &str) {
 
 fn write_polygon_shapefile(dir: &Path, name: &str) {
     let shp = dir.join(format!("{name}.shp"));
-    let builder = dbase::TableWriterBuilder::new()
-        .add_character_field("label".try_into().unwrap(), 20);
+    let builder =
+        dbase::TableWriterBuilder::new().add_character_field("label".try_into().unwrap(), 20);
     let mut writer = shapefile::Writer::from_path(&shp, builder).unwrap();
 
     let polygon = geo_types::Polygon::new(
-        geo_types::LineString::from(vec![(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0), (0.0, 0.0)]),
+        geo_types::LineString::from(vec![
+            (0.0, 0.0),
+            (4.0, 0.0),
+            (4.0, 4.0),
+            (0.0, 4.0),
+            (0.0, 0.0),
+        ]),
         vec![],
     );
     let mut record = dbase::Record::default();
@@ -188,8 +194,7 @@ async fn geojson_merge_crs_and_coordinates() {
     let zip = zip_dir(dir.path());
 
     let limits = Arc::new(Limits::default());
-    let (status, content_type, body) =
-        post_convert(limits, "/convert?f=json", &zip).await;
+    let (status, content_type, body) = post_convert(limits, "/convert?f=json", &zip).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content_type, "application/geo+json");
 
@@ -208,7 +213,10 @@ async fn geojson_merge_crs_and_coordinates() {
     assert_eq!(f0["properties"]["name"], "alpha");
     assert_eq!(f0["properties"]["value"], serde_json::json!(1.5));
 
-    assert_eq!(v["features"][1]["geometry"]["coordinates"], serde_json::json!([3.0, 4.0]));
+    assert_eq!(
+        v["features"][1]["geometry"]["coordinates"],
+        serde_json::json!([3.0, 4.0])
+    );
     assert_eq!(v["features"][1]["properties"]["name"], "beta");
 
     // polygon shapefile (different schema, no prj) merged into same collection;
@@ -310,7 +318,12 @@ async fn unknown_format_is_400() {
     let (status, _, body) = post_convert(limits, "/convert?f=kml", &zip).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(v["error"].as_str().unwrap().contains("unsupported output format"));
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported output format")
+    );
 }
 
 #[tokio::test]

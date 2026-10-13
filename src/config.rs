@@ -1,6 +1,7 @@
-//! Runtime configuration and resource limits.
+use std::sync::Arc;
 
 const DEFAULT_PORT: u16 = 3000;
+static DEFAULT_HOSTNAME: &str = "127.0.0.1";
 const DEFAULT_MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024; // 25 MB
 const DEFAULT_MAX_EXTRACTED_BYTES: usize = 1024 * 1024 * 1024; // 1 GB
 
@@ -21,21 +22,31 @@ impl Default for Limits {
     }
 }
 
-impl Limits {
-    pub fn from_env() -> Self {
-        let mut limits = Limits::default();
-        if let Some(v) = env_parse("MAX_UPLOAD_BYTES") {
-            limits.max_upload_bytes = v;
-        }
-        if let Some(v) = env_parse("MAX_EXTRACTED_BYTES") {
-            limits.max_extracted_bytes = v;
-        }
-        limits
-    }
+#[derive(Debug, Clone)]
+pub struct AppConfig {
+    pub port: u16,
+    pub hostname: String,
+    pub limits: Arc<Limits>,
 }
 
-pub fn port_from_env() -> u16 {
-    env_parse("PORT").unwrap_or(DEFAULT_PORT)
+impl AppConfig {
+    pub fn from_env() -> Self {
+        let port = env_parse("APP_PORT").unwrap_or(DEFAULT_PORT);
+        let hostname = env_parse("APP_HOSTNAME").unwrap_or(DEFAULT_HOSTNAME.to_string());
+        let mut limits_cfg = Limits::default();
+        if let Some(v) = env_parse("MAX_UPLOAD_BYTES") {
+            limits_cfg.max_upload_bytes = v;
+        }
+        if let Some(v) = env_parse("MAX_EXTRACTED_BYTES") {
+            limits_cfg.max_extracted_bytes = v;
+        }
+        let limits = Arc::new(limits_cfg);
+        AppConfig {
+            port,
+            hostname,
+            limits,
+        }
+    }
 }
 
 fn env_parse<T: std::str::FromStr>(key: &str) -> Option<T> {
@@ -53,6 +64,5 @@ mod tests {
         let l = Limits::default();
         assert_eq!(l.max_upload_bytes, 25 * 1024 * 1024);
         assert_eq!(l.max_extracted_bytes, 1024 * 1024 * 1024);
-        assert_eq!(port_from_env(), 3000);
     }
 }
