@@ -77,6 +77,49 @@ fn write_polygon_shapefile(dir: &Path, name: &str) {
     // no .prj on purpose: only the points shapefile carries CRS metadata
 }
 
+fn write_polygon_with_hole_shapefile(dir: &Path, name: &str) {
+    let shp = dir.join(format!("{name}.shp"));
+    let builder =
+        dbase::TableWriterBuilder::new().add_character_field("label".try_into().unwrap(), 32);
+    let mut writer = shapefile::Writer::from_path(&shp, builder).unwrap();
+
+    // The upper boundary samples a semicircular arc. Shapefile polygon rings
+    // are linear, so each sample becomes a vertex in the converted geometry.
+    let exterior = geo_types::LineString::from(vec![
+        (-4.0, -2.0),
+        (4.0, -2.0),
+        (4.0, 0.0),
+        (3.0, 2.0),
+        (2.0, 3.0),
+        (0.0, 4.0),
+        (-2.0, 3.0),
+        (-3.0, 2.0),
+        (-4.0, 0.0),
+        (-4.0, -2.0),
+    ]);
+    let hole = geo_types::LineString::from(vec![
+        (0.0, -1.0),
+        (0.7071, -0.7071),
+        (1.0, 0.0),
+        (0.7071, 0.7071),
+        (0.0, 1.0),
+        (-0.7071, 0.7071),
+        (-1.0, 0.0),
+        (-0.7071, -0.7071),
+        (0.0, -1.0),
+    ]);
+    let polygon = geo_types::Polygon::new(exterior, vec![hole]);
+
+    let mut record = dbase::Record::default();
+    record.insert(
+        "label".to_string(),
+        dbase::FieldValue::Character(Some("arched polygon with hole".to_string())),
+    );
+    writer
+        .write_shape_and_record(&shapefile::Polygon::from(polygon), &record)
+        .unwrap();
+}
+
 /// Zip every file in `dir` (flat) into a zip archive.
 fn zip_dir(dir: &Path) -> Vec<u8> {
     let mut buf = Cursor::new(Vec::new());
@@ -183,6 +226,60 @@ async fn healthz_ok() {
     let (status, body) = get(&mut app, "/healthz").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, br#"{"status":"ok"}"#.to_vec());
+}
+
+#[tokio::test]
+async fn polygon_with_interior_ring_and_sampled_arc_converts() {
+    let dir = tempfile::tempdir().unwrap();
+    write_polygon_with_hole_shapefile(dir.path(), "arched-area");
+    let zip = zip_dir(dir.path());
+    let limits = Arc::new(Limits::default());
+
+    let (status, _, body) = post_convert(limits.clone(), "/convert?f=json", &zip).await;
+    assert_eq!(status, StatusCode::OK);
+    let geojson: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let geometry = &geojson["features"][0]["geometry"];
+    assert_eq!(geometry["type"], "MultiPolygon");
+    let rings = geometry["coordinates"][0].as_array().unwrap();
+    assert_eq!(rings.len(), 2, "expected exterior plus one interior ring");
+    assert_eq!(rings[0].as_array().unwrap().len(), 10);
+    assert_eq!(rings[1].as_array().unwrap().len(), 9);
+    assert!(
+        rings[0]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!([0.0, 4.0]))
+    );
+    assert!(
+        rings[1]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!([1.0, 0.0]))
+    );
+
+    let (status, _, body) = post_convert(limits, "/convert?f=fgb", &zip).await;
+    assert_eq!(status, StatusCode::OK);
+    let features = read_fgb(&body);
+    assert_eq!(features.len(), 1);
+    assert_eq!(features[0].0["label"], "arched polygon with hole");
+    match &features[0].1 {
+        geo_types::Geometry::MultiPolygon(mp) => {
+            let polygon = &mp.0[0];
+            assert_eq!(polygon.interiors().len(), 1);
+            assert!(
+                polygon
+                    .exterior()
+                    .coords()
+                    .any(|coord| coord.x == 0.0 && coord.y == 4.0)
+            );
+            assert!(
+                polygon.interiors()[0]
+                    .coords()
+                    .any(|coord| coord.x == 1.0 && coord.y == 0.0)
+            );
+        }
+        other => panic!("expected MultiPolygon, got {other:?}"),
+    }
 }
 
 #[tokio::test]
