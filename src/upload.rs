@@ -8,7 +8,7 @@ use std::{
 
 use tempfile::TempDir;
 
-use crate::{error::ApiError, limits::Limits};
+use crate::{config::Limits, error::ApiError};
 
 /// Extract the uploaded zip into a temporary directory.
 ///
@@ -26,22 +26,26 @@ pub fn unzip(archive_bytes: &[u8], limits: &Limits) -> Result<TempDir, ApiError>
             .by_index(i)
             .map_err(|e| ApiError::InvalidZip(e.to_string()))?;
 
+        let entry_name = entry
+            .name()
+            .map(|name| name.into_owned())
+            .unwrap_or_else(|_| "<invalid_name>".to_string());
+
         if entry.is_dir() {
             continue;
         }
         if entry.is_symlink() {
-            return Err(ApiError::UnsafeEntry(format!("symlink '{}'", entry.name())));
+            return Err(ApiError::UnsafeEntry(format!("symlink '{entry_name}'")));
         }
         if entry.encrypted() {
             return Err(ApiError::UnsafeEntry(format!(
-                "encrypted entry '{}'",
-                entry.name()
+                "encrypted entry '{entry_name}'"
             )));
         }
         // enclosed_name rejects absolute paths and `..` traversal (zip-slip).
         let rel_path = entry
             .enclosed_name()
-            .ok_or_else(|| ApiError::UnsafeEntry(format!("bad path '{}'", entry.name())))?;
+            .ok_or_else(|| ApiError::UnsafeEntry(format!("bad path '{entry_name}'")))?;
 
         let declared_size = entry.size() as usize;
         total_extracted = total_extracted
